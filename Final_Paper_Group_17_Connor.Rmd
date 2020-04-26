@@ -1,0 +1,511 @@
+---
+title: "Final Paper"
+author: "STOR 320.02 Group 17"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+library(xtable)
+library(caret)
+library(ggplot2)
+library(modelr)
+library(purrr)
+library(broom)
+library(glmnet)
+library(knitr)
+library(kableExtra)
+#Put Necessary Libraries Here
+```
+
+```{r, include=FALSE, warning=FALSE}
+#Data cleaning
+
+WorldCupMatches = read_csv("C:/Users/cfolk/Documents/STOR 320/WorldCupMatches.csv")
+
+WorldCupMatches1=WorldCupMatches[-c(837:4572),]
+#837 because 2014 data is repeated in the data set
+
+WorldCupMatches1=mutate(WorldCupMatches1, HomeTeamResult= ifelse(`Home Team Goals`> `Away Team Goals`, "Win", ifelse(`Home Team Goals`< `Away Team Goals`, "Loss", "Tie")))
+
+WorldCupMatches1=mutate(WorldCupMatches1, AwayTeamResult= ifelse(`Home Team Goals`< `Away Team Goals`, "Win", ifelse(`Home Team Goals`> `Away Team Goals`, "Loss", "Tie")))
+
+WorldCupMatches1=mutate(WorldCupMatches1, HomeHalfResult= ifelse(`Half-time Home Goals`> `Half-time Away Goals`, "Winning", ifelse(`Half-time Home Goals`< `Half-time Away Goals`, "Lossing", "Tied")))
+
+WorldCupMatches1=mutate(WorldCupMatches1, AwayHalfResult= ifelse(`Half-time Home Goals`< `Half-time Away Goals`, "Winning", ifelse(`Half-time Home Goals`> `Half-time Away Goals`, "Lossing", "Tied")))
+
+WorldCupMatches1= WorldCupMatches1 %>%
+  mutate(Stage=str_replace(Stage,"Third place", "Match for third place"))%>%
+  mutate(Stage=str_replace(Stage,"Play-off for third place", "Match for third place")) %>%
+  mutate(`Home Team Name`=str_replace(`Home Team Name`,"Germany FR", "Germany"))%>%
+  mutate(`Away Team Name`=str_replace(`Away Team Name`,"Germany FR", "Germany"))%>% 
+  mutate(`Home Team Name`=str_replace(`Home Team Name`,'rn">Republic of Ireland', 'Ireland'))%>%
+  mutate(`Away Team Name`=str_replace(`Away Team Name`,'rn">Republic of Ireland', 'Ireland'))
+  
+WorldCupMatches1=mutate(WorldCupMatches1, Winner=
+  ifelse(`Home Team Goals`> `Away Team Goals`, `Home Team Name`,
+  ifelse(`Home Team Goals`< `Away Team Goals`, `Away Team Name`,
+  "NA (Win based on penalties)")))
+
+WorldCupMatches1=mutate(WorldCupMatches1, Loser=
+  ifelse(`Home Team Goals`< `Away Team Goals`, `Home Team Name`,
+  ifelse(`Home Team Goals`> `Away Team Goals`, `Away Team Name`,
+  "NA (Win based on penalties)")))
+
+
+WorldCupMatchesPast16=WorldCupMatches1%>%
+  filter(Year>1950)%>%
+  filter(!grepl("Group", Stage))
+
+WorldCupGroup=WorldCupMatches1%>%
+  filter(Year>1950)%>%
+  filter(grepl("Group", Stage))
+
+Round16_funct= function(year, teamname){
+
+  x=WorldCupMatchesPast16$`Home Team Name`
+  y=WorldCupMatchesPast16$`Away Team Name`
+  z=WorldCupMatchesPast16$Year
+  
+    R= (ifelse((x==teamname|y==teamname) & z==year, "Yes", "No"))
+    
+    R2=(unique(R[which(R=="Yes")]))
+    
+    Round_of_16= ifelse(is_empty(R2), "No", "Yes")
+    return(Round_of_16)
+}
+
+Round_16=mapply(Round16_funct, WorldCupMatches1$Year, WorldCupMatches1$`Home Team Name`)
+
+Round_16_df=as.tibble(cbind(WorldCupMatches1$Year, WorldCupMatches1$`Home Team Name`, (Round_16)))
+names(Round_16_df)= c("Year", "Country", "Roundof16")
+Round_16_df
+
+Round_16_df=Round_16_df%>%
+  distinct(Country, Year, .keep_all=TRUE)
+Round_16_df$Year= as.numeric(Round_16_df$Year)
+Round_16_df
+
+WorldCupMatches1=left_join(WorldCupMatches1, Round_16_df, by=c(`Home Team Name`= "Country", "Year"= "Year"))
+
+WorldCupMatches1$Roundof16= as.factor(WorldCupMatches1$Roundof16)
+WorldCupMatches1=WorldCupMatches1%>%
+  separate(Datetime, into=c("Date", "Time"),sep="-",
+           convert=T)%>%
+  rename("HomeTeamGoals"= `Home Team Goals`)%>%
+  rename("AwayTeamGoals"= `Away Team Goals`)%>%
+  mutate(GoalDifferential= HomeTeamGoals- AwayTeamGoals)%>%
+  mutate(Time=str_replace(Time, ":", ""))%>%
+  mutate(Time=as.numeric(Time))
+
+WorldCupMatchesGroup=
+  WorldCupMatches1%>%
+  filter(grepl("Group", Stage))%>%
+  filter(Year>1950)%>%
+  select(-`Win conditions`, -`Date`, -`City`, -`MatchID`, -`RoundID`, -`AwayHalfResult`, -`AwayTeamResult`)%>%
+  mutate(Stadium=as.factor(`Stadium`))%>%
+  mutate(HomeTeamResult= as.factor(HomeTeamResult))%>%
+  mutate(HomeHalfResult= as.factor(HomeHalfResult))
+         
+WorldCupMatchesGroup=WorldCupMatchesGroup[, !sapply(WorldCupMatchesGroup, is.character)]
+
+
+WCMG.1 = WorldCupMatchesGroup[,c(1:9,12,11)]
+WCMG.1 = as.data.frame(WCMG.1)
+
+WorldCupGroup=WorldCupMatches1%>%
+  filter(Year>1950)%>%
+  filter(grepl("Group", Stage))
+
+WorldCupMatchesPast16=WorldCupMatches1%>%
+  filter(Year>1950)%>%
+  filter(!grepl("Group", Stage))
+```
+
+
+
+# INTRODUCTION
+
+As sports culture has continued to grow globally, so has the interest in and use of sports data analytics to predict game results. The World Cup is the most viewed tournament in the world, and the ability to make predictions on its outcomes is in high demand by sports statisticians, soccer fans, and even gamblers. This tournament has the highest volume of betting of any sport, and approximately $155 billion was gambled on the 2018 World Cup. Clearly, there are huge sums of money at stake, and we decided to study existing World Cup data to see if we could create prediction models that use previous tournament data to predict future outcomes. Additionally, only eight teams have ever won the World Cup - Brazil (5 titles), Germany (4), Italy (4), Argentina (2), France (2), Uruguay (2), England (1), Spain (1). We wanted to explore if prediction models would always predict one of these eight teams as winners (of individual knockout rounds or the tournament as a whole), or if their past wins are not necessarily indicative of countries with consistently strong soccer teams. 
+
+After comprehensively exploring our data, our group was very interested in two particular questions. The first question we decided to examine was: "Does the comeback rate of teams in the group stages affect the success of teams once they are in the knockout stage?" Each World Cup tournament is separated into two stages - the group stage and the knockout stage. The group stage consists of eight groups of four teams, and each team plays the other three in their group once, for six total games. The top two teams from each group move on to the knockout stage, a single-elimination tournament beginning with the round of 16 and continuing through to the final, championship match. This current group stage into knockout round design has been in place since after 1950. We developed this first question due to the set-up of the World Cup based on the theory that teams with high comeback rates should be indicative of a strong team- one who may have had a poor first half but is resilient enough to turn the game around and win. We wanted to test this theory through this question, and were interested in hopefully uncovering patterns that highlight the strength of a team based on their comeback rate in the group stage. These patterns would be very useful for predicting the success of teams based on their knockout-stage performance.
+
+While we were interested in uncovering a relationship between group and knockout stage performance, we also wanted to build a predictive model that would consider multiple factors over time. Because the World Cup structure has changed since its first tournament in 1930, we believe it important to consider group stage performance over time. Therefore, our second question was: "Given the factors we have considered (time; attendance; and home vs away team goals, half-time result, and final result), can we predict if a team will make it to the knockout-stage based on the features of group stage games?". Through this question, we explored the accuracy of predicting a team's ability to make it to the knock-out stages depending on variables deemed strong determinants of prediction. While our exploratory analysis suggested that success in the knock-out stage was not a good predictor of winning the final, it is important to consider that there are fewer matches played in the knock-out stage than the group stage. We believe it is more meaningful to explore the way group stage variables over time affects teams' chances of advancing to the higher stake games. This model could be useful in determining if group stage factors are an accurate predictor of success in the knockout stage. 
+
+
+
+# DATA
+
+This dataset has information regarding the FIFA World Cups and was posted by Andre Becklas on Kaggle, who found the data on the FIFA World Cup Archive website. Out of 20 variables, the relevant variables include year, date, time, stage, city, stadium, home team name, home team goals, away team goals, away team name, attendance, half-time home goals, and half-time away goals. There are 836 observations in this dataset. Beginning in the year 1930, it provides information on every year the FIFA Cups were held with missing information about the 1950 finals. There is also missing information from the 1942 and 1946 tournaments, as they were cancelled due to WWII. Due to some missing data as well as fundamental changes in the structure of the tournament that would potentially skew our models, we also decided to filter the data to include only the tournaments after 1950.
+
+The dataset shows that the World Cup is primarily held in May, June, or July with game times between 11:30am and 10pm. The stage variable describes the stage of the game in the tournament, with group stages being the initial matches. The match for third place is a match for the two losers of the semi-finals. The preliminary rounds only occurred in the first year of the World Cup, 1934. The group stage observations change from letter variations to number variations in the year 1974. The next stages include the round of 16 (also known as first round), quarter-finals, semi-finals, and finals. The city and stadium variables refer to the name of the city and stadium where the match was played. The stadium variable was important in initial data analysis, as it required web scraping for further data to determine the stadium capacity. Home team name and away team name are labeled as the nations those teams represent. Home team plays against the away team, but the location of the actual game has no effect on the label of home or away. The final results are labeled by the home team goals and away team goals, with half-time results labeled as half-time. Attendance varies between 2,000 and 173,850 fans. It is important to note that attendance does not analyze the stadium capacity nor the percentage of the capacity filled. The table below is a condensed version of the original data, focused on the final matches with the half time home team goal count equalling zero. 
+
+```{r, echo=FALSE}
+WorldCupMatches%>%
+  unique()%>%
+  filter(Stage=="Final", `Half-time Home Goals` == "0") %>%
+  select(-c("Win conditions","Referee","Assistant 1","Assistant 2","RoundID","MatchID","Home Team Initials", "Away Team Initials"))%>%
+  kable(format = "html", escape = F)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"))%>% scroll_box(width = "150%", height = "400px")%>%kable_styling(fixed_thead = list(enabled=T, background="skyblue"))
+```
+
+As we worked through these two questions, we created new variables based on the variables we were given to help answer our questions. We created Home Team Result, Away Team Result as well as their half time results with the label win, loss and tie. We created the "Goal Differential" variable, which shows the absolute value of difference in goals between the competing teams. We also created variables to indicate individual country success. To do this, we created a win percentage variable for the finals as well as the tournament as a whole to better understand which teams have found true success. Furthermore, we also created a variable to represent a team's comeback rate. We measured comeback rate by isolating matches where teams were losing at half-time but went on to win the game, aggregated these results and divided by all matches where teams were losing at half-time to find each team's proportion of games in which they experienced this, hence their "comeback rate". 
+
+We then created datasets isolating the observations based on stages grouped into the group stages and knock-out stages. The knock-out stages consist of round of 16, match for third place, quarter-finals, semi-finals, and final rounds. We analyzed the knock-out stages in further depth as we found interesting results from our initial assessment; primarily that only eight teams have ever won the Fifa World Cup. We wanted to see if this was the best determinant for a quality team as we found that some teams have only won once, specifically England and Spain. Some teams, such as the Netherlands, have won multiple knock-out stage matches but have never won the finals of the World Cup. It is interesting to point out that the Netherlands have won more knockout stage games than Spain and Uruguay and are tied with France in the amount of knockout stage games won, and yet they have never won the World Cup. The graph below depicts the knockout round participation of teams who have made it that far (some years did not include a Round of 16, hence why some countries appear to have never played in this round but have played in higher knockout stage rounds). These findings motivated and formed the basis of both of our questions, as we aimed to determine and predict which teams would win in the future. 
+
+```{r, echo=FALSE, fig.width=10, fig.height=10}
+Q8WCM <-
+  WorldCupMatches1%>%
+    mutate(USAC = ifelse(`Home Team Name` == 'USA' | `Away Team Name` == 'USA', TRUE, FALSE))%>%
+    count(USAC)
+  
+Q8WorldCupMatches<-
+WorldCupMatches1%>%
+  filter(Stage =='Final'| Stage == 'Semi-finals'| Stage == 'Quarter-finals'| Stage == 'Round of 16' | Stage == 'Match for third place')
+
+Q8WorldCupMatchesFlipped=Q8WorldCupMatches%>%
+rename(`Home Team Name`= `Away Team Name`, `Away Team Name`=`Home Team Name`)
+
+graph8 = rbind(Q8WorldCupMatchesFlipped, Q8WorldCupMatches)
+
+graph8%>% 
+  arrange(`Home Team Name`) %>%
+  mutate(Stage=factor(Stage, levels=c("Final", "Match for third place", "Semi-finals", "Quarter-finals", "Round of 16"))) %>%
+ggplot()+geom_bar(mapping = aes(`Home Team Name` , fill = Stage)) + scale_y_continuous(breaks=seq(0,70, by=2), name="Count")+coord_flip() + theme(axis.text.y=element_text(size=11, angle=35), axis.text.x=element_text(size=11), legend.title=element_text(size=14), legend.text=element_text(size=13), plot.title=element_text(size=15), axis.title=element_text(size=13)) + ggtitle("Participation in Knockout Stage Matches by Country")
+```
+
+
+
+
+# RESULTS
+
+In tackling our first question, we created a comeback rate variable representing the percentage of games where a country was losing at half-time but won the match itself. We also created two win percentage variables - one for wins in all knockout stage matches, and one for winning the final match. These two win percentage variables were how we chose to measure success in the knockout rounds. Next, we created a table, as shown below, that displayed each country with their comeback rate, total win percentage, and finals win percentage. From there, we ran two linear regressions. The first regression examined the relationship between group stage comeback rate and win percentage in the knockout stage, and the second examined the relationship between a group stage comeback rate and win percentage of the final, championship match. We also examined the correlations between each set of variables and produced graphs to summarize each relationship.
+
+
+```{r, include=FALSE}
+RESULT_FUN= function(TEAMNAME) {
+  
+  x=WorldCupMatchesPast16$`Home Team Name`
+  y=WorldCupMatchesPast16$`Away Team Name`
+  
+   z=ifelse((x==TEAMNAME|y==TEAMNAME) & WorldCupMatchesPast16$Winner==TEAMNAME,"Win",
+    ifelse((x==TEAMNAME|y==TEAMNAME) & WorldCupMatchesPast16$Loser==TEAMNAME,"Loss",
+    ifelse((x==TEAMNAME|y==TEAMNAME) & (WorldCupMatchesPast16$`HomeTeamGoals`== WorldCupMatchesPast16$`AwayTeamGoals`), "Tie","NA")))
+  
+  z.factor=factor(z)
+  
+  winperafter16= nrow(filter(WorldCupMatchesPast16, z=="Win"))/ nrow(filter(WorldCupMatchesPast16, z=="Win"|z=="Loss"|z=="Tie"))*100
+
+return(winperafter16)
+}
+
+RESULT_FUNFIN= function(TEAMNAME) {
+  
+  x=WorldCupMatchesPast16$`Home Team Name`
+  y=WorldCupMatchesPast16$`Away Team Name`
+  
+   z=ifelse((x==TEAMNAME|y==TEAMNAME) & WorldCupMatchesPast16$Winner==TEAMNAME,"Win",
+    ifelse((x==TEAMNAME|y==TEAMNAME) & WorldCupMatchesPast16$Loser==TEAMNAME,"Loss",
+    ifelse((x==TEAMNAME|y==TEAMNAME) & (WorldCupMatchesPast16$`HomeTeamGoals`== WorldCupMatchesPast16$`AwayTeamGoals`), "Tie","NA")))
+  
+  z.factor=factor(z)
+  
+  winperfinals= nrow(filter(WorldCupMatchesPast16, z=="Win" & Stage=="Final"))/ nrow(filter(WorldCupMatchesPast16, z=="Win"|z=="Loss"|z=="Tie"))*100
+  
+return(winperfinals)
+}
+
+Country=WorldCupMatchesPast16$`Home Team Name`
+TotalWinpercentage=(apply(WorldCupMatchesPast16[,7], 1, RESULT_FUN))
+FinalsWinpercentage=(apply(WorldCupMatchesPast16[,7], 1, RESULT_FUNFIN))
+Winpercentage=as.tibble(cbind(Country, TotalWinpercentage, FinalsWinpercentage))
+Winpercentage
+
+Winpercentage$TotalWinpercentage= as.numeric(Winpercentage$TotalWinpercentage)
+Winpercentage$FinalsWinpercentage= as.numeric(Winpercentage$FinalsWinpercentage)
+
+
+Comeback_funct= function(TEAMNAME){
+  p=(nrow(filter(WorldCupGroup,((HomeHalfResult=="Lossing" & HomeTeamResult=="Win")|(AwayHalfResult=="Lossing" & AwayTeamResult=="Win")) & (Winner==TEAMNAME)))/nrow(filter(WorldCupGroup, (HomeHalfResult=="Lossing"|AwayHalfResult=="Lossing") & (Winner==TEAMNAME|Loser==TEAMNAME))) * 100)
+  
+
+  return(p)
+}
+Country2=WorldCupGroup$`Home Team Name`
+Comebackpercentage=((apply(WorldCupGroup[,7], 1, Comeback_funct)))
+COMEBACKPERCENTAGE=as.tibble(cbind(Country2,Comebackpercentage))
+COMEBACKPERCENTAGE
+
+
+COMEBACKPERCENTAGE$Comebackpercentage= as.numeric(COMEBACKPERCENTAGE$Comebackpercentage)
+
+
+Percentages=left_join(Winpercentage, COMEBACKPERCENTAGE, by=c("Country"="Country2"))
+
+Percentages= Percentages%>%
+  distinct(Country, .keep_all=TRUE)
+```
+
+```{r, echo=FALSE}
+Percentages%>% 
+  arrange(Country) %>%
+  rename(`Total Win Percentage`= "TotalWinpercentage", `Finals Win Percentage`="FinalsWinpercentage", `Comeback Rate`="Comebackpercentage")%>%
+kable(format = "html", escape = F, digits = 2)%>%
+  kable_styling(bootstrap_options = c("striped", "hover", "responsive"))%>%  
+  scroll_box(width="110%", height = "200px")%>%
+  kable_styling(fixed_thead = list(enabled=T, background="skyblue"))
+```
+
+Our first linear regression examined the relationship between comeback rate in the group stage and win percentage in the knockout stage. While we had hoped to see a relationship, that in turn might indicate that comeback rate in the group stages is a good indicator of future success, the results were not statistically significant. The p-value of comeback rate was notably high, at 0.567. Additionally, examining the correlation between the two yielded a correlation of -0.099. The correlation's proximity to 0 further supports our findings that there is essentially no relationship between comeback rate in the group stages and win percentage in the knockout round. Furthermore, the graph below visually depicts this lack of a relationship. 
+
+```{r, include=FALSE}
+linmod=lm(TotalWinpercentage~Comebackpercentage, data= Percentages)
+summary(linmod)
+cor(Percentages$Comebackpercentage, Percentages$TotalWinpercentage)
+```
+
+```{r, echo=FALSE}
+ggplot(data=Percentages, aes(x=Comebackpercentage, y=TotalWinpercentage, color=Country))+ geom_point() + scale_x_continuous(name = "Comeback Rate (Group Stage)") + scale_y_continuous(name ="Total Win Percentage (Knockout Round)") + theme(plot.title=element_text(size=14))+ ggtitle("Total Knockout Stage Win Percentage Plotted \n Against Comeback Rate by Country")
+```
+
+Our second linear regression investigated comeback rate in the group stage again, but now studied its relationship with win percentage in the final round of the World Cup. We again hoped to see a relationship to potentially suggest that the "top 8" teams who hold World Cup titles played particularly well, especially when losing at half-time. However, once again the results were not statistically significant. The p-value was slightly lower, but still remarkably high, at 0.4122. The correlation was slightly higher, but still indicated essentially no relationship at 0.14, visually depicted in the graph below. 
+
+
+```{r, include=FALSE}
+linmod=lm(FinalsWinpercentage~Comebackpercentage, data= Percentages)
+summary(linmod)
+cor(Percentages$Comebackpercentage, Percentages$FinalsWinpercentage)
+```
+
+```{r, echo=FALSE}
+ggplot(data=Percentages, aes(x=Comebackpercentage, y=FinalsWinpercentage, color=Country))+ geom_point() + scale_x_continuous(name = "Comeback Rate (Group Stage)") + scale_y_continuous(name ="Final Win Percentage (Knockout Round)")+ theme(plot.title=element_text(size=14))+ ggtitle("Final Round Win Percentage Plotted Against \n Comeback Rate by Country")
+```
+
+Ultimately, neither linear regression or correlation calculation indicated a relationship between comeback rate in the group stage and a team's success in the knockout round. Unfortunately, this means that comeback rate is not a good predictor of a team's win percentage in the knockout stages. While we had hoped to see a relationship, there are reasonable explanations for the lack thereof. First of all, the low-scoring nature of the game of soccer makes coming back from a loss at half-time not only incredibly difficult but also rare. Additionally, stronger teams rarely are losing at half-time anyway - many excellent teams in the data were shown to have a comeback rate of 0, but this is likely because they are never losing at half-time, especially in the group stages where weaker teams have yet to be eliminated. A comeback rate of 0, in general, does not necessarily indicate playing well or poorly but does prevent us from analyzing how teams perform in the high-pressure situation of trying to come back from a half-time loss. In the same vein, weaker teams rarely come back from a half-time loss both due to their weakness and the low-scoring nature of the game. While comeback rate initially showed potential to be a strong indicator of knockout round performance, further exploration refuted this. 
+
+For our second question, we hoped to better understand what factors would best predict which team is most likely to win in the knockout stages using variables from group stage matches. We decided to run two models and determine which is more likely to best predict knockout stage winners. We started by running a backwards selection method that analyzes the entire model, taking one variable away at a time until it achieves the lowest AIC. This method showed that the most significant factors of time, attendance, and home team result are the predictors in determining whether a team makes it to the round of 16. We then created a graph to show the relationship between time and attendance when determining whether a team made the round of 16. We also created a graph to depict a correlation between home team result and time shown below.
+
+
+```{r, include=FALSE}
+WCMG.1 = WorldCupMatchesGroup[,c(1:9,12,11)]
+WCMG.1 = as.data.frame(WCMG.1)
+head(WCMG.1)
+out=glm(Roundof16~., data=WCMG.1, family=binomial)
+step(out, k=log(nrow(WCMG.1)), direction = "backward")
+```
+
+
+```{r, echo=FALSE}
+ggplot(WCMG.1) +
+  geom_point(aes(x=Time,y=Attendance,color=factor(Roundof16)),alpha=c(0.3))+
+  theme_minimal()+
+  theme(text=element_text(size=12), plot.title=element_text(size=14)) +
+  guides(color=guide_legend(title="Round of 16")) + scale_x_continuous(name ="Military Time") + scale_y_continuous(name="Attendance (Number of People)") + ggtitle("Attendance Plotted Over Time of Day and if \n Home Team Reached Round of 16")
+```
+
+
+
+```{r, echo=FALSE}
+ggplot(WCMG.1) +
+  geom_point(aes(x=Time,y=HomeTeamResult,color=factor(Roundof16)),alpha=c(0.3))+
+  theme_minimal()+
+  theme(text=element_text(size=12), plot.title=element_text(size=14)) + scale_x_continuous(name ="Military Time") +
+  guides(color=guide_legend(title="Round of 16")) + scale_y_discrete(name ="Home Team Result") + ggtitle("Home Team Result Plotted Over Time of Day \n and if Home Team Reached Round of 16")
+```
+
+We then ran a lasso model, which makes the coefficients closer and closer to 0, until we are left with significant values. This model showed that the most significant variables are away team goals, home team results, and home half results. These results were very interesting to us, because the assignment of a team to either be "home" or "away" is arbitrary and not based on the team's strength. Therefore, it is surprising that away team goals are significant while home team goals are not. We purposefully did not include away team results or away half results because they would have an exactly opposite correlation. This model correctly predicted teams would not make it to the round of 16 stage 102 times, and incorrectly predicted 27 times. This model correctly predicted teams would make it to the round of 16 match 317 times and incorrectly predicted 139 times. 
+
+After running these two models, we analyzed the sensitivity, specificity, false positive rate, and false negative rate of the different models using leave-one-out cross validation. In this method, one observation is left out of the data and the model is fitted to the other observations, then tested on the observation left out. This continues until all individual observations are left out and tested. The results are shown in this table below, with green values indicating where one model was better and red values indicating where one model was worse. It is important to note that we are looking for high sensitivity and specificity as well as low false positive rates and false negative rates. The sensitivity is better when looking at the Lasso model. The false positive rate is the same. The specificity and false negative rate are more desirable for the backwards model. The best model depends on what an individual desires most in an answer. If an individual is looking for the most accurate response regarding true positives, Lasso may fit better. If an individual is looking for the most accurate response regarding false positives, the backwards model may fit better. Therefore, neither model is objectively better.
+
+```{r, include=FALSE}
+WCMG.2= select(WCMG.1, "Roundof16", "HomeTeamResult", "Time", "Attendance")
+WCMG.2=mutate(WCMG.2, Roundof16=ifelse(Roundof16=="Yes", 1, 0))
+WCMG.2=mutate(WCMG.2, Roundof16=factor(Roundof16))
+set.seed(704)
+acc <- NULL
+
+for(i in 1:nrow(WCMG.2))
+{
+    # Train-test splitting
+    # 499 samples -> fitting
+    # 1 sample -> testing
+    train <- WCMG.2[-i,]
+    test <- WCMG.2[i,]
+    
+    # Fitting
+    model <- glm(Roundof16~.,family=binomial,data=train)
+    
+    # Predict results
+    results_prob <- predict(model,subset(test,select=c(2:4)),type='response')
+    
+    # If prob > 0.5 then 1, else 0
+    results=ifelse(results_prob > 0.5,1,0)
+    results=factor(results, c(0,1))
+    
+    
+    
+    # Actual answers
+    answers <- test$Roundof16
+    
+    
+    # Calculate accuracy
+    misClasificError <- mean(answers != results)
+    
+    # Collecting results
+    acc[i] <- 1-misClasificError
+    
+     cm = confusionMatrix(data=results, reference=answers)
+     
+}
+set.seed(704)
+acc <- NULL
+
+for(i in 1:nrow(WCMG.2))
+{
+    # Train-test splitting
+    # 499 samples -> fitting
+    # 1 sample -> testing
+    train <- WCMG.2[-i,]
+    test <- WCMG.2[i,]
+    
+    # Fitting
+    model <- glm(Roundof16~.,family=binomial,data=train)
+    
+    # Predict results
+    results_prob <- predict(model,subset(test,select=c(2:4)),type='response')
+    
+    # If prob > 0.5 then 1, else 0
+    results[i]=ifelse(results_prob > 0.5,1,0)
+    results=factor(results, c(0,1))
+    
+    
+    
+    # Actual answers
+    answers[i] <- test$Roundof16
+    
+    
+    # Calculate accuracy
+    misClasificError <- mean(answers != results)
+    
+    # Collecting results
+    acc[i] <- 1-misClasificError
+    
+     cm = confusionMatrix(data=results, reference=answers)
+     
+}
+# Average accuracy of the model
+mean(acc)
+
+# Histogram of the model accuracy
+hist(acc,xlab='Accuracy',ylab='Freq',main='Accuracy LOOCV',
+     col='cyan',border='blue',density=30)
+
+cm
+table2=cm$table
+```
+
+```{r, include=FALSE}
+WorldCupMatchesGroup=
+  WorldCupMatches1%>%
+  filter(grepl("Group", Stage))
+
+data= WorldCupMatchesGroup%>%
+  filter(Year>1950)%>%
+  mutate(Roundof16= ifelse(Roundof16=="Yes",1,0))%>%
+  mutate(`Home Team Name`= as.factor(`Home Team Name`), `Away Team Name`= as.factor(`Away Team Name`), City=as.factor(City), HomeTeamResult= as.factor(HomeTeamResult), HomeHalfResult= as.factor(HomeHalfResult), Stadium= as.factor(Stadium))%>%
+  select(-`Win conditions`,-`Date`, -`RoundID`,-`MatchID`)
+  
+data=data[, !sapply(data, is.character)]
+data=data[,c(14,1:13,15)]
+has_NA = apply(is.na(data), 1, any)
+data = data[!has_NA,]
+which(is.na(data))
+
+
+set.seed(704)
+cvmod.0=cv.glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),alpha=0,
+                  family="binomial",type.measure="class")
+set.seed(704)
+cvmod.25=cv.glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),alpha=0.25,
+                   family="binomial",type.measure="class")
+set.seed(704)
+cvmod.5=cv.glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),alpha=0.5,
+                  family="binomial",type.measure="class")
+set.seed(704)
+cvmod.75=cv.glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),alpha=0.75,
+                   family="binomial",type.measure="class")
+set.seed(704)
+cvmod.1=cv.glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),alpha=1,
+                  family="binomial",type.measure="class")
+
+CV.0.ERROR=cvmod.0$cvm[which(cvmod.0$lambda==cvmod.0$lambda.1se)]
+CV.25.ERROR=cvmod.25$cvm[which(cvmod.25$lambda==cvmod.25$lambda.1se)]
+CV.5.ERROR=cvmod.5$cvm[which(cvmod.5$lambda==cvmod.5$lambda.1se)]
+CV.75.ERROR=cvmod.75$cvm[which(cvmod.75$lambda==cvmod.75$lambda.1se)]
+CV.1.ERROR=cvmod.1$cvm[which(cvmod.1$lambda==cvmod.1$lambda.1se)]
+
+MOD.RESULT=tibble(alpha=c(0,0.25,0.5,0.75,1),
+                  lambda=c(cvmod.0$lambda.1se,cvmod.25$lambda.1se,
+                           cvmod.5$lambda.1se,cvmod.75$lambda.1se,
+                           cvmod.1$lambda.1se),
+                  CV.Error=c(CV.0.ERROR,CV.25.ERROR,CV.5.ERROR,
+                             CV.75.ERROR,CV.1.ERROR))
+print(MOD.RESULT)
+        
+
+
+best.alpha=MOD.RESULT$alpha[which.min(MOD.RESULT$CV.Error)]
+best.lambda=MOD.RESULT$lambda[which.min(MOD.RESULT$CV.Error)]
+
+best.mod=glmnet(y=as.factor(data$Roundof16),x=data.matrix(data[,-1]),
+                nlambda=1,lambda=best.lambda,alpha=best.alpha,
+                family="binomial")
+best.coef=as.matrix(coef(best.mod))
+(best.coef)
+coef(best.mod)
+
+data$Predict=predict(best.mod,newx=data.matrix(data[,-1]),type="class")
+data$Roundof16=ifelse(data$Roundof16==1,"Yes","No")
+data$Predict=ifelse(data$Predict==1,"Yes","No")
+
+table1=table(data[,c("Roundof16","Predict")])
+print(table1)
+print(table2)
+ERROR.RESULTS = tibble(
+    Model=c("Lasso", "Backwards"),
+    Sensitivity=c(table1[2,2]/sum(table1[2,]),(table2[2,2]/sum(table2[,2]))),
+    Specificity=c(table1[1,1]/sum(table1[1,]),(table2[1,1]/sum(table2[,1]))),
+    FPR=c(table1[1,2]/sum(table1[,2],table2[1,1]/sum(table2[1,]))),
+    FNR=c(table1[2,1]/sum(table1[,1]), table2[1,2]/sum(table2[2,]))
+)
+print(ERROR.RESULTS)
+
+
+exp(0.32950509)/ (1 + exp(0.32950509))
+```
+
+```{r, echo=FALSE}
+ERROR.RESULTS%>%
+  mutate(Sensitivity = cell_spec(Sensitivity, "html", color = ifelse(Sensitivity > .90, "green", "red")),
+         Specificity= cell_spec(Specificity, "html", color = ifelse(Specificity > .50, "green", "red")),
+         FNR= cell_spec(FNR, "html",color = ifelse(FNR > .20, "red", "green")))%>%
+  kable(format = "html", escape = F)%>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+
+
+# CONCLUSION
+
+Our first question explored: "Does the comeback rate of teams in the group stages affect the success of teams once they are in the knockout stage?" The search to answer this question was motivated primarily by a desire to see if the "top 8" teams, or the eight countries who have ever won a World Cup title, are the best eight teams in the world or if their wins may have been due to luck or a uniquely strong team in one given year. However, our results showed that there is essentially no relationship between a team's comeback rate in the group stage and their performance in the knockout round in general or the championship round specifically. Ultimately, while we had hoped to identify a potential indicator of knockout round success, the comeback rate is not a reliable indicator. We believe this is primarily due to the low-scoring nature of soccer making it very difficult to come back from a half-time loss. 
+
+Our second question explored: "Given the factors we have considered (time; attendance; and home vs away team goals, half-time result, and final result), can we predict if a team will make it to the knockout-stage based on the features of group stage games?". The backward selection method found the best model to include time, attendance, and home team result, however, this model did not have strong levels of specificity. The lasso-backward method found the best model to include away team goals, home team result, and home half result. The lasso model has the strongest measure for predicting positive cases and sensitivity and the backwards model is better for predicting negative cases. Overall, using lasso or backward models have the most potential to predict if a team appears in the round of 16 using away team goals, home team result, and home half result, and the choice to use one over the other depends on preferences for sensitivity and FNP. 
+
+For our first question, regarding the correlation between comeback rate and win percentage in the knockout stages and final, the results were intended to be used as a predictor on who would win the World Cup. If we had been able to find a strong correlation between the two variables, we would have been able to further investigate if comeback rate was an accurate predictor. Our findings remain important as they first highlight the high level of competition in this tournament. Due to the changing level of skill by all countries, it is hard to find correlations between coming back from games and winning games in the future rounds, but exploring how team skill level affects their comeback rate or total win rate could be interesting for future analysis . The second finding that is important to note is that comeback rates are not a solid statistic to base bets around. Since there is a weak correlation, betting on a team because they tend to come back at a high rate when losing, is not a reliable way to place bets as it does not increase the likelihood that a given team will win. For our second question, our methods showed that the factors of time, attendance, home team result, away team goals, and home half result are the most significant predictors to determine whether a team makes it to the round of 16. This information was slightly unexpected, as we did not predict that these variables would have any significant impact on determining who would advance to the round of 16. It is important to note that the home team result was found to be a significant predictor in both models. The findings are important, as it tells us that if we can understand trends of attendance and time on match winners, we could better predict who would win each game, which would be helpful for those interested in gambling. Unfortunately, our data set lacked many real-world predictors, and we were unable to find any complete, cohesive datasets that had more, so we were unable to perhaps find better predictors such as temperature, altitude, etcetera. 
+
+Our second question in particular paves the way for researchers to continue searching for a group stage match statistic that could predict who will win knockout stage games, specifically using home team results. Since this variable was found significant in predicting both models, it could be useful to explore if other models also find home team results as a strong predictor. It may also be worth investigating further whether there is an underlying bias of some sort towards the home team, even though home team assignment is allegedly arbitrary. The next step could be to explore if total team goals and team goal differential throughout the group stage are significant in predicting group stage winners or if there is any correlation among them. When looking at the modeling aspect, there are a lot of different directions that research could go. The vast amount of exogenous variables that exist in tournaments likely need to be represented in some way. As mentioned previously, examining other random variables, such as altitude, temp, etcetera could be a useful way to find better atmospheric predictors of match winners. Although there is not much data that currently exists for the World Cup overtime, it provokes the idea of studying more exogenous variables within tournament play. We think that one of the most useful variables to explore could be the skill of individual team players. Through individual player skill assessment and access to data on player match ratings, goals, assists, key dribbles, shots on goal, and key passes, there exists the possibility of finding significant player statistics that are useful in predicting their team's success. Another route could be to consider team statistics by the game, such as possession, fouls, shots on goal, and movement patterns of the team. These types of variables give more specific information regarding matches and team quality, and including them in prediction models has the potential to be significant. The skill level of a team is constantly changing over time, and it could be useful to explore how varying skill levels of teams change as their success changes. In general, including variables that represent the skill and technical levels of a team could increase a model's ability to accurately predict a team's outcome, and this could lead to more analysis on using a team's outcome to predict their future success. 
+
