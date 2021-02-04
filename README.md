@@ -13,4 +13,4 @@
 
 [FantasyFootballTest](https://connorfolk.github.io/Projects/Fantasy_Football.html)
 
-[BearMarketBook](https://70be3ca1f35745f5b93257d12303085f.app.rstudio.cloud/file_show?path=%2Fcloud%2Fproject%2FFinalworking.pdf)
+[BearMarketBook](https://nbviewer.jupyter.org/github/ConnorFolk/Projects/blob/master/BearMarketBookV1.pdf)
