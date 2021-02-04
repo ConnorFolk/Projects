@@ -1,4 +1,10 @@
-# Projects
+# Connor Folk
+## About me
+* [Resume](
+
+* [LinkedIn](https://www.linkedin.com/in/connor-folk-44ab58173/)
+
+## Projects
 
 ### Contains my projects using a variety of data analysis techniques
 
