@@ -1,8 +1,4 @@
-
-
 ## About me
-
-
 
 * [Resume](https://nbviewer.jupyter.org/github/ConnorFolk/Projects/blob/master/Resume_1_11_21.pdf)
 
