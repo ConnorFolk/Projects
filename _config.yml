@@ -1,4 +1,4 @@
-theme: jekyll-theme-minimal
 title: Connor Folk
-description: My Personal Website
 logo: root/assets/images/Headshot2021.jpg
+description: My Personal Website
+theme: jekyll-theme-minimal
