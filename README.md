@@ -1,6 +1,4 @@
-# Connor Folk
 
-<img align="right" height="200" src="https://github.com/ConnorFolk/Projects/blob/master/Headshot2021.jpg">
 
 ## About me
 
