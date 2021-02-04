@@ -1,4 +1,4 @@
 theme: jekyll-theme-minimal
 title: ["Connor Folk"]
 description: ["My Personal Website"]
-logo: [/assets/images/Headshot2021.jpg]
+logo: ![image](/assets/images/Headshot2021.jpg)
