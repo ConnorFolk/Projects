@@ -14,3 +14,5 @@
 [FantasyFootballTest](https://connorfolk.github.io/Projects/Fantasy_Football.html)
 
 [BearMarketBook](https://nbviewer.jupyter.org/github/ConnorFolk/Projects/blob/master/BearMarketBookV1.pdf)
+
+[TicTacToe](https://github.com/ConnorFolk/Projects/blob/5d431a53fae75fcac29fa984c2f42e203d498aa9/TICTACTOE.py)
