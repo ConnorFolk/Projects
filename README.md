@@ -1,6 +1,6 @@
 ## About me
 
-* [Resume](https://nbviewer.jupyter.org/github/ConnorFolk/Projects/blob/master/Resume_1_11_21.pdf)
+* [Resume](https://nbviewer.org/github/ConnorFolk/Projects/blob/master/Folk_Connor_Resume.pdf)
 
 * [LinkedIn](https://www.linkedin.com/in/connor-folk-44ab58173/)
 
