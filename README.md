@@ -19,4 +19,4 @@
 
 [Weather API](https://github.com/ConnorFolk/Projects/blob/1a122b6721c1ee649a40cea1eb8cc7123beb9065/PythonWeatherReal.py)
 
-[Stack Overflow Question Text Analysis Presentation] (https://nbviewer.org/github/ConnorFolk/Projects/blob/76a1789916cd9e7d0ec687a17f6e5e545155746f/TextAnalyticsPresentation.pdf)
+[Stack Overflow Question Text Analysis Presentation](https://nbviewer.org/github/ConnorFolk/Projects/blob/76a1789916cd9e7d0ec687a17f6e5e545155746f/TextAnalyticsPresentation.pdf)
